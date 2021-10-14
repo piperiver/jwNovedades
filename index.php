@@ -1,6 +1,7 @@
 <?php
+error_reporting(E_ERROR);
 // error_reporting(E_ALL);
-// ini_set("display_errors", 1);
+ini_set("display_errors", 1);
 include_once('vendor/autoload.php');
 
 use Sendinblue\Mailin;
@@ -14,6 +15,8 @@ class Jw {
     protected $URL_TOKEN = 'https://b.jw-cdn.org/tokens/jworg.jwt';
     protected $API_VIDEOS = 'https://b.jw-cdn.org/apis/mediator/v1/categories/S/LatestVideos?detailed=1&clientType=www';
     protected $MODEL_URL_VIDEO = 'https://www.jw.org/finder?locale=es&category=LatestVideos&item=%KEY%&docid=1011214&applanguage=S';
+
+    protected $fileWatched = 'watched.json';
 
     function getPageContent($url)
 	{
@@ -32,9 +35,15 @@ class Jw {
         $finder = new DomXPath($dom);
         $articles = $finder->query("//*[contains(concat(' ', normalize-space(@class), ' '), ' $this->CLASS_BODY_ARTICLE ')]");
 
+        $watched = $this->getWatched();
+        $isNewWatched = false;
         $htmlArticlesComplete = '';
         foreach($articles as $article){
-
+            if(in_array($article->nodeValue, $watched['articles'])){
+                continue;
+            }
+            $isNewWatched = true;
+            $watched['articles'][] = $article->nodeValue;
             $htmlArticle = $dom->saveHTML($article);
             $htmlArticle = str_replace('href="/es/', 'href="'.$this->URL_JW.'/es/', $htmlArticle);
             $htmlArticle = str_replace('/">', '/" target="_blank" >', $htmlArticle);
@@ -42,7 +51,29 @@ class Jw {
             $htmlArticlesComplete .= $htmlArticle;
         }
 
-        return $htmlArticlesComplete;
+        if($isNewWatched){
+            $this->setWatched(json_encode($watched));
+            return $htmlArticlesComplete;
+        }else{
+            return false;
+        }
+    }
+
+    function setWatched($content){
+        return file_put_contents($this->fileWatched, $content);
+    }
+
+    function getWatched(){
+        $content = file_get_contents($this->fileWatched, true);
+        $content = $content === false ? [] : json_decode($content, true);
+        $content = !is_array($content) ? [] : $content;
+        if(!isset($content['articles'])){
+            $content['articles'] = [];
+        }
+        if(!isset($content['videos'])){
+            $content['videos'] = [];
+        }
+        return $content;
     }
 
     function getToken(){
@@ -71,8 +102,17 @@ class Jw {
         $dataVideos = $this->getVideosData();
         $title = $dataVideos['category']['description'];
 
+        $watched = $this->getWatched();
+        $isNewWatched = false;
+
         $htmlVideos = '<h1>'.$title.'</h1>';
         foreach($dataVideos['category']['media'] as $media){
+            if(in_array($media['languageAgnosticNaturalKey'], $watched['videos'])){
+                continue;
+            }
+            $isNewWatched = true;
+            $watched['videos'][] = $media['languageAgnosticNaturalKey'];
+
             $duration = $media['durationFormattedMinSec'];
             $dataPublication = date('Y-m-d', strtotime($media['firstPublished']));
             $portada = $media['images']['wss']['sm'];
@@ -86,20 +126,25 @@ class Jw {
                         <a href="'.$url.'" target="_blank">
                             <img src="'.$portada.'" loading="lazy" alt="..." class="img" />
                         </a>
-                        <span class="time">'.$duration.'</span>
                     </div>
                     <div class="description">
                         <a href="'.$url.'" target="_blank">
                             <p class="title">'.$titleVideo.'</p>
                         </a>
                         <p class="date">'.$dataPublication.'</p>
+                        <p><span class="time">'.$duration.'</span></p>
                     </div>
                 </div>
 
             ';
         }
 
-        return $htmlVideos;
+        if($isNewWatched){
+            $this->setWatched(json_encode($watched));
+            return $htmlVideos;
+        }else{
+            return false;
+        }
     }
 
     function styles(){
@@ -127,15 +172,18 @@ class Jw {
             }
 
             .content-img img{
-                width: 100%;
                 border-radius: 5px;
                 width: 250px;
+                height: 100%;
+                object-fit: cover;
+            }
+
+            .content-img a {
+                display: block;
+                height: 100%;
             }
 
             .time{
-                position: absolute;
-                bottom: 10px;
-                right: 10px;
                 background: rgba(0, 0, 0, 0.5);
                 color: #fff;
                 padding: 5px;
@@ -160,7 +208,7 @@ class Jw {
             .syn-body{
                 padding: 15px;
                 margin: 15px auto;
-                border: 1px solid #f2f2f2;
+                border: 1px solid #d9d9d9;
                 border-radius: 10px;
                 box-shadow: 2px 2px 5px 2px #f2f2f2;
                 max-width: 700px;
@@ -221,21 +269,35 @@ class Jw {
     function main(){
         $articles = $this->getArticlesHtml();
         $videos = $this->generateBodyVideos();
-        return $this->content('
-        <div>
-            <h1>Vea los últimos articulos</h1>
-            '.$articles.'
-        </div>
-        <div>
-            '.$videos.'
-        </div>
-        ');
+
+        if($articles === false && $videos === false){
+            return false;
+        }
+
+        $contentArticles = $articles ? '
+                <div>
+                    <h1>Vea los últimos articulos</h1>
+                    '.$articles.'
+                </div>
+            '
+        :
+            '';
+
+        $contentVideos = $videos ? '
+                <div>
+                    '.$videos.'
+                </div>
+            '
+        :
+            '';
+
+        return $this->content($contentArticles.$contentVideos);
     }
 
     public function sendMail($message, $asunto)
 	{
         $api_key = 'tWEFr7Pm2sCDavAT';
-        $from_email = 'piperiver7@gmail.com';
+        $from_email = 'prograymer@gmail.com';
         $from_name = 'Novedades';
 
         $to_email = 'piperiver7@gmail.com';
@@ -259,11 +321,18 @@ class Jw {
 
 }
 
+date_default_timezone_set('America/Bogota');
 if(isset($_GET['send']) && $_GET['send'] === 'true'){
     $jw = new Jw();
     $html = $jw->main();
-    $jw->sendMail($html, 'JW NOVEDADES - LO NUEVO');
+    if($html){
+        $jw->sendMail($html, 'JW NOVEDADES - LO NUEVO');
+        file_put_contents('log.fff', date('Y-m-d H:i:s').' => Ejecutado con exito y correo enviado'.PHP_EOL, FILE_APPEND);
+    }else{
+        file_put_contents('log.fff', date('Y-m-d H:i:s').' => Nada nuevo. Correo no enviado'.PHP_EOL, FILE_APPEND);
+    }
+}else{
+    file_put_contents('log.fff', date('Y-m-d H:i:s').' => Me ejecutaron sin el parametro'.PHP_EOL, FILE_APPEND);
 }
 
-echo date('Y-m-d H:i:s');
 

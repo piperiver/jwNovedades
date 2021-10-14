@@ -1,2 +1,4 @@
 vendor
 .DS_Store
+watched.json
+log.fff
